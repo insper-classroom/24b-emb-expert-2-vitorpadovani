@@ -63,7 +63,7 @@
 
 #define READ_BIT 0x80
 
-int32_t t_fine;
+volatile int32_t t_fine;
 
 uint16_t dig_T1;
 int16_t dig_T2, dig_T3;
@@ -250,19 +250,20 @@ int main() {
     GFX_createFramebuf();
 
     while (1) {
+        int temperature1, pressure1, humidity1;
         bme280_read_raw(&humidity, &pressure, &temperature);
         GFX_clearScreen();
         GFX_setCursor(0, 0);
 
         // These are the raw numbers from the chip, so we need to run through the
         // compensations to get human understandable numbers
-        temperature = compensate_temp(temperature);
-        pressure = compensate_pressure(pressure);
-        humidity = compensate_humidity(humidity);
+        temperature1 = compensate_temp(temperature);
+        pressure1 = compensate_pressure(pressure);
+        humidity1 = compensate_humidity(humidity);
 
-        GFX_printf("Humidity = %.2f%%\n", humidity / 1024.0);
-        GFX_printf("Pressure = %dPa\n", pressure);
-        GFX_printf("Temp. = %.2fC\n", temperature / 100.0);
+        GFX_printf("Humidity = %.2f%%\n", humidity1 / 1024.0);
+        GFX_printf("Pressure = %dPa\n", pressure1);
+        GFX_printf("Temp. = %.2fC\n", temperature1 / 100.0);
         GFX_flush();
         sleep_ms(500);
         sleep_ms(1000);
