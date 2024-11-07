@@ -79,7 +79,7 @@ compensation parameters stored on the chip at point of manufacture, which are
 read from the chip at startup and used in these routines.
 */
 int32_t compensate_temp(int32_t adc_T) {
-    int32_t t_fine;
+    int32_t t_fine = 0;
     int32_t var1, var2, T;
     var1 = ((((adc_T >> 3) - ((int32_t) dig_T1 << 1))) * ((int32_t) dig_T2)) >> 11;
     var2 = (((((adc_T >> 4) - ((int32_t) dig_T1)) * ((adc_T >> 4) - ((int32_t) dig_T1))) >> 12) * ((int32_t) dig_T3))
@@ -91,7 +91,7 @@ int32_t compensate_temp(int32_t adc_T) {
 }
 
 uint32_t compensate_pressure(int32_t adc_P) {
-    int32_t t_fine;
+    int32_t t_fine = 0;
     int32_t var1, var2;
     uint32_t p;
     var1 = (((int32_t) t_fine) >> 1) - (int32_t) 64000;
@@ -117,7 +117,7 @@ uint32_t compensate_pressure(int32_t adc_P) {
 }
 
 uint32_t compensate_humidity(int32_t adc_H) {
-    int32_t t_fine;
+    int32_t t_fine = 0;
     int32_t v_x1_u32r;
     v_x1_u32r = (t_fine - ((int32_t) 76800));
     v_x1_u32r = (((((adc_H << 14) - (((int32_t) dig_H4) << 20) - (((int32_t) dig_H5) * v_x1_u32r)) +
