@@ -1,15 +1,70 @@
+/**
+ * Copyright (c) 2020 Raspberry Pi (Trading) Ltd.
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
+// #include <stdio.h>
+// #include "pico/stdlib.h"
+// #include "hardware/gpio.h"
+
+// int main() {
+//     stdio_init_all();
+//     while (true) {
+//         printf("Hello, world!\n");
+//         sleep_ms(1000);
+//     }
+// }
+
+
 #include "pico/stdlib.h"
+
 #include "ili9341.h"
 #include "gfx.h"
+
+/**
+ * Copyright (c) 2020 Raspberry Pi (Trading) Ltd.
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
 #include <stdio.h>
 #include <string.h>
+#include "pico/stdlib.h"
 #include "pico/binary_info.h"
 #include "hardware/spi.h"
 
-// Definições dos registradores para o sensor BME280
+/* Example code to talk to a bme280 humidity/temperature/pressure sensor.
+
+   NOTE: Ensure the device is capable of being driven at 3.3v NOT 5v. The Pico
+   GPIO (and therefore SPI) cannot be used at 5v.
+
+   You will need to use a level shifter on the SPI lines if you want to run the
+   board at 5v.
+
+   Connections on Raspberry Pi Pico board and a generic bme280 board, other
+   boards may vary.
+
+   GPIO 16 (pin 21) MISO/spi0_rx-> SDO/SDO on bme280 board
+   GPIO 17 (pin 22) Chip select -> CSB/!CS on bme280 board
+   GPIO 18 (pin 24) SCK/spi0_sclk -> SCL/SCK on bme280 board
+   GPIO 19 (pin 25) MOSI/spi0_tx -> SDA/SDI on bme280 board
+   3.3v (pin 36) -> VCC on bme280 board
+   GND (pin 38)  -> GND on bme280 board
+
+   Note: SPI devices can have a number of different naming schemes for pins. See
+   the Wikipedia page at https://en.wikipedia.org/wiki/Serial_Peripheral_Interface
+   for variations.
+
+   This code uses a bunch of register definitions, and some compensation code derived
+   from the Bosch datasheet which can be found here.
+   https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bme280-ds002.pdf
+*/
+
 #define READ_BIT 0x80
 
-// Parâmetros de calibração do sensor
+int32_t t_fine;
+
 uint16_t dig_T1;
 int16_t dig_T2, dig_T3;
 uint16_t dig_P1;
@@ -18,11 +73,16 @@ uint8_t dig_H1, dig_H3;
 int8_t dig_H6;
 int16_t dig_H2, dig_H4, dig_H5;
 
+/* The following compensation functions are required to convert from the raw ADC
+data from the chip to something usable. Each chip has a different set of
+compensation parameters stored on the chip at point of manufacture, which are
+read from the chip at startup and used in these routines.
+*/
 int32_t compensate_temp(int32_t adc_T) {
-    int32_t t_fine = 0;
     int32_t var1, var2, T;
     var1 = ((((adc_T >> 3) - ((int32_t) dig_T1 << 1))) * ((int32_t) dig_T2)) >> 11;
-    var2 = (((((adc_T >> 4) - ((int32_t) dig_T1)) * ((adc_T >> 4) - ((int32_t) dig_T1))) >> 12) * ((int32_t) dig_T3)) >> 14;
+    var2 = (((((adc_T >> 4) - ((int32_t) dig_T1)) * ((adc_T >> 4) - ((int32_t) dig_T1))) >> 12) * ((int32_t) dig_T3))
+            >> 14;
 
     t_fine = var1 + var2;
     T = (t_fine * 5 + 128) >> 8;
@@ -30,19 +90,14 @@ int32_t compensate_temp(int32_t adc_T) {
 }
 
 uint32_t compensate_pressure(int32_t adc_P) {
-    int32_t t_fine = 0;
     int32_t var1, var2;
     uint32_t p;
-
     var1 = (((int32_t) t_fine) >> 1) - (int32_t) 64000;
-    var2 = ((uint32_t)(((var1 >> 2) * (var1 >> 2)) >> 11)) * ((int32_t) dig_P6);
+    var2 = (((var1 >> 2) * (var1 >> 2)) >> 11) * ((int32_t) dig_P6);
     var2 = var2 + ((var1 * ((int32_t) dig_P5)) << 1);
     var2 = (var2 >> 2) + (((int32_t) dig_P4) << 16);
-
-    // Garantimos que var1 seja positivo antes do deslocamento
-    var1 = (((uint32_t) dig_P3 * (((uint32_t)(var1 >> 2) * (var1 >> 2)) >> 13)) >> 3) + ((((int32_t) dig_P2) * var1) >> 1);
-    var1 = ((32768 + var1) * ((int32_t) dig_P1)) >> 15;
-
+    var1 = (((dig_P3 * (((var1 >> 2) * (var1 >> 2)) >> 13)) >> 3) + ((((int32_t) dig_P2) * var1) >> 1)) >> 18;
+    var1 = ((((32768 + var1)) * ((int32_t) dig_P1)) >> 15);
     if (var1 == 0)
         return 0;
 
@@ -60,12 +115,13 @@ uint32_t compensate_pressure(int32_t adc_P) {
 }
 
 uint32_t compensate_humidity(int32_t adc_H) {
-    int32_t t_fine = 0;
     int32_t v_x1_u32r;
-
     v_x1_u32r = (t_fine - ((int32_t) 76800));
-    v_x1_u32r = (((((adc_H << 14) - (((int32_t) dig_H4) << 20) - (((int32_t) dig_H5) * v_x1_u32r)) + ((int32_t) 16384)) >> 15)
-                * (((((((v_x1_u32r * ((int32_t) dig_H6)) >> 10) * (((v_x1_u32r * ((int32_t) dig_H3)) >> 11) + ((int32_t) 32768))) >> 10) + ((int32_t) 2097152)) * ((int32_t) dig_H2) + 8192) >> 14));
+    v_x1_u32r = (((((adc_H << 14) - (((int32_t) dig_H4) << 20) - (((int32_t) dig_H5) * v_x1_u32r)) +
+                   ((int32_t) 16384)) >> 15) * (((((((v_x1_u32r * ((int32_t) dig_H6)) >> 10) * (((v_x1_u32r *
+                                                                                                  ((int32_t) dig_H3))
+            >> 11) + ((int32_t) 32768))) >> 10) + ((int32_t) 2097152)) *
+                                                 ((int32_t) dig_H2) + 8192) >> 14));
     v_x1_u32r = (v_x1_u32r - (((((v_x1_u32r >> 15) * (v_x1_u32r >> 15)) >> 7) * ((int32_t) dig_H1)) >> 4));
     v_x1_u32r = (v_x1_u32r < 0 ? 0 : v_x1_u32r);
     v_x1_u32r = (v_x1_u32r > 419430400 ? 419430400 : v_x1_u32r);
@@ -76,7 +132,7 @@ uint32_t compensate_humidity(int32_t adc_H) {
 #ifdef PICO_DEFAULT_SPI_CSN_PIN
 static inline void cs_select() {
     asm volatile("nop \n nop \n nop");
-    gpio_put(PICO_DEFAULT_SPI_CSN_PIN, 0);  // Ativo em baixo
+    gpio_put(PICO_DEFAULT_SPI_CSN_PIN, 0);  // Active low
     asm volatile("nop \n nop \n nop");
 }
 
@@ -90,7 +146,7 @@ static inline void cs_deselect() {
 #if defined(spi_default) && defined(PICO_DEFAULT_SPI_CSN_PIN)
 static void write_register(uint8_t reg, uint8_t data) {
     uint8_t buf[2];
-    buf[0] = reg & 0x7f;  // remove o bit de leitura para escrita
+    buf[0] = reg & 0x7f;  // remove read bit as this is a write
     buf[1] = data;
     cs_select();
     spi_write_blocking(spi_default, buf, 2);
@@ -99,6 +155,9 @@ static void write_register(uint8_t reg, uint8_t data) {
 }
 
 static void read_registers(uint8_t reg, uint8_t *buf, uint16_t len) {
+    // For this particular device, we send the device the register we want to read
+    // first, then subsequently read from the device. The register is auto incrementing
+    // so we don't need to keep sending the register we want, just the first.
     reg |= READ_BIT;
     cs_select();
     spi_write_blocking(spi_default, &reg, 1);
@@ -108,13 +167,16 @@ static void read_registers(uint8_t reg, uint8_t *buf, uint16_t len) {
     sleep_ms(10);
 }
 
+/* This function reads the manufacturing assigned compensation parameters from the device */
 void read_compensation_parameters() {
     uint8_t buffer[26];
+
     read_registers(0x88, buffer, 26);
 
     dig_T1 = buffer[0] | (buffer[1] << 8);
     dig_T2 = buffer[2] | (buffer[3] << 8);
     dig_T3 = buffer[4] | (buffer[5] << 8);
+
     dig_P1 = buffer[6] | (buffer[7] << 8);
     dig_P2 = buffer[8] | (buffer[9] << 8);
     dig_P3 = buffer[10] | (buffer[11] << 8);
@@ -124,20 +186,22 @@ void read_compensation_parameters() {
     dig_P7 = buffer[18] | (buffer[19] << 8);
     dig_P8 = buffer[20] | (buffer[21] << 8);
     dig_P9 = buffer[22] | (buffer[23] << 8);
-    dig_H1 = buffer[25];
+
+    dig_H1 = buffer[25]; // 0xA1
 
     read_registers(0xE1, buffer, 8);
-    dig_H2 = buffer[0] | (buffer[1] << 8);
-    dig_H3 = (int8_t) buffer[2];
-    dig_H4 = buffer[3] << 4 | (buffer[4] & 0xf);
-    dig_H5 = (buffer[4] >> 4) | (buffer[5] << 4);
-    dig_H6 = (int8_t) buffer[6];
+
+    dig_H2 = buffer[0] | (buffer[1] << 8); // 0xE1 | 0xE2
+    dig_H3 = (int8_t) buffer[2]; // 0xE3
+    dig_H4 = buffer[3] << 4 | (buffer[4] & 0xf); // 0xE4 | 0xE5[3:0]
+    dig_H5 = (buffer[4] >> 4) | (buffer[5] << 4); // 0xE5[7:4] | 0xE6
+    dig_H6 = (int8_t) buffer[6]; // 0xE7
 }
 
 static void bme280_read_raw(int32_t *humidity, int32_t *pressure, int32_t *temperature) {
     uint8_t buffer[8];
-    read_registers(0xF7, buffer, 8);
 
+    read_registers(0xF7, buffer, 8);
     *pressure = ((uint32_t) buffer[0] << 12) | ((uint32_t) buffer[1] << 4) | (buffer[2] >> 4);
     *temperature = ((uint32_t) buffer[3] << 12) | ((uint32_t) buffer[4] << 4) | (buffer[5] >> 4);
     *humidity = (uint32_t) buffer[6] << 8 | buffer[7];
@@ -186,20 +250,19 @@ int main() {
     GFX_createFramebuf();
 
     while (1) {
-        int temperature1, pressure1, humidity1;
         bme280_read_raw(&humidity, &pressure, &temperature);
         GFX_clearScreen();
         GFX_setCursor(0, 0);
 
         // These are the raw numbers from the chip, so we need to run through the
         // compensations to get human understandable numbers
-        temperature1 = compensate_temp(temperature);
-        pressure1 = compensate_pressure(pressure);
-        humidity1 = compensate_humidity(humidity);
+        temperature = compensate_temp(temperature);
+        pressure = compensate_pressure(pressure);
+        humidity = compensate_humidity(humidity);
 
-        GFX_printf("Humidity = %.2f%%\n", humidity1 / 1024.0);
-        GFX_printf("Pressure = %dPa\n", pressure1);
-        GFX_printf("Temp. = %.2fC\n", temperature1 / 100.0);
+        GFX_printf("Humidity = %.2f%%\n", humidity / 1024.0);
+        GFX_printf("Pressure = %dPa\n", pressure);
+        GFX_printf("Temp. = %.2fC\n", temperature / 100.0);
         GFX_flush();
         sleep_ms(500);
         sleep_ms(1000);
